@@ -22,6 +22,9 @@
 #include "vm/vm.h"
 #endif
 
+/* Sizes of process args*/
+#define MAX_ARGS 64
+
 static void process_cleanup (void);
 static bool load (const char *file_name, struct intr_frame *if_);
 static void initd (void *f_name);
@@ -164,6 +167,11 @@ int
 process_exec (void *f_name) {
 	char *file_name = f_name;
 	bool success;
+	int argc = 0;
+	uint64_t argv[MAX_ARGS + 1];
+	uint64_t argv_addr[MAX_ARGS];
+	char *tokens[MAX_ARGS];
+	char *token, *save_ptr;
 
 	/* We cannot use the intr_frame in the thread structure.
 	 * This is because when current thread rescheduled,
@@ -176,8 +184,50 @@ process_exec (void *f_name) {
 	/* We first kill the current context */
 	process_cleanup ();
 
+	for (token = strtok_r (file_name, " ", &save_ptr); token != NULL; token = strtok_r (NULL, " ", &save_ptr)) {
+
+		if (argc >= MAX_ARGS) {
+			palloc_free_page (file_name);
+			return -1;
+		}
+
+		tokens[argc] = token;
+		argc += 1;
+	}
+
+	if (argc == 0) {
+		palloc_free_page (file_name);
+		return -1;
+	}
+
 	/* And then load the binary */
-	success = load (file_name, &_if);
+	success = load (tokens[0], &_if);
+
+	if (success) {
+	
+		for (int i = argc - 1; i >= 0; i -= 1) {
+			_if.rsp -= strlen(tokens[i]) + 1;
+			memcpy((void *) _if.rsp, tokens[i], strlen(tokens[i]) + 1);
+			argv_addr[i] = _if.rsp;
+		}
+
+		_if.rsp -= _if.rsp % 8;
+
+		_if.rsp -= 8;
+		argv[argc] = _if.rsp;
+
+		
+		for (int i = argc - 1; i >= 0; i -= 1) {
+			_if.rsp -= 8;
+			*(uint64_t *) _if.rsp = argv_addr[i];
+			argv[i] = _if.rsp;
+		}
+
+		_if.rsp -= 8;		
+
+		_if.R.rdi = argc;
+		_if.R.rsi = argv[0];
+	}
 
 	/* If load failed, quit. */
 	palloc_free_page (file_name);
