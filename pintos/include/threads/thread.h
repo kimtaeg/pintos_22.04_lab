@@ -148,6 +148,8 @@ struct thread {
 
 	struct semaphore fork_sema;
 	bool fork_success;
+
+	struct file *running_file;
 #endif
 #ifdef VM
 	/* Table for whole virtual memory owned by thread. */

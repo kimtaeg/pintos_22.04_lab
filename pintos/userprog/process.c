@@ -25,7 +25,7 @@
 #endif
 
 /* Sizes of process args*/
-#define MAX_ARGS 64
+#define MAX_ARGS 32
 
 static void process_cleanup (void);
 static bool load (const char *file_name, struct intr_frame *if_);
@@ -369,6 +369,13 @@ static void
 process_cleanup (void) {
 	struct thread *curr = thread_current ();
 
+	if(curr->running_file != NULL){
+		lock_acquire(&filesys_lock);
+		file_close(curr->running_file);
+		lock_release(&filesys_lock);
+		curr->running_file = NULL;
+	}
+
 #ifdef VM
 	supplemental_page_table_kill (&curr->spt);
 #endif
@@ -638,6 +645,8 @@ load (const char *file_name, struct intr_frame *if_) {
 		goto done;
 	}
 
+	file_deny_write(file);
+
 	/* Read and verify executable header. */
 	if (file_read (file, &ehdr, sizeof ehdr) != sizeof ehdr
 			|| memcmp (ehdr.e_ident, "\177ELF\2\1\1", 7)
@@ -717,7 +726,12 @@ load (const char *file_name, struct intr_frame *if_) {
 
 done:
 	/* We arrive here whether the load is successful or not. */
-	file_close (file);
+
+	if(success){
+		thread_current()->running_file = file; 
+	}else{
+		file_close (file);
+	}
 	return success;
 }
 

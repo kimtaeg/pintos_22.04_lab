@@ -23,15 +23,17 @@ void syscall_handler (struct intr_frame *); // register handler
 
 static void halt (void);
 static void exit (int status);
-static int exec(void *file_name);
+static tid_t fork (const char *thread_name, struct intr_frame *f);
+static int exec (void *file_name);
 static bool create (const char *name, unsigned initial_size);
 static bool remove (const char *name);
-static int write (int fd, const void *buffer, unsigned size);
 static int open (const char *file_name);
-static void close(int value);
 static int filesize(int value);
 static int read (int fd, void *buffer, unsigned size);
-static tid_t fork (const char *thread_name, struct intr_frame *f);
+static int write (int fd, const void *buffer, unsigned size);
+static void seek (int fd, unsigned position);
+static unsigned tell (int fd);
+static void close (int value);
 
 /* System call.
  *
@@ -204,7 +206,7 @@ syscall_handler (struct intr_frame *f UNUSED) {
 	{
 	// power_off 호출
 	case SYS_HALT:
-		halt();
+		halt 	();
 		break;
 	
 	case SYS_EXIT:
@@ -212,35 +214,35 @@ syscall_handler (struct intr_frame *f UNUSED) {
 		break;
 
 	case SYS_FORK:
-		f->R.rax = fork((const char *) f->R.rdi, f);
+		f->R.rax = fork ((const char *) f->R.rdi, f);
 		break;
 
 	case SYS_EXEC:
-		exec((void *) f->R.rdi);
+		exec ((void *) f->R.rdi);
 		break;
 
 	case SYS_WAIT:
-		f->R.rax = process_wait(f->R.rdi);
+		f->R.rax = process_wait (f->R.rdi);
 		break;
 
 	case SYS_CREATE:
-		f->R.rax = create((char *) f->R.rdi, (unsigned) f->R.rsi);
+		f->R.rax = create ((char *) f->R.rdi, (unsigned) f->R.rsi);
 		break;
 
 	case SYS_REMOVE:
-		f->R.rax = remove((char *) f->R.rdi);
+		f->R.rax = remove ((char *) f->R.rdi);
 		break;
 
 	case SYS_OPEN:
-		f->R.rax = open(f->R.rdi);
+		f->R.rax = open (f->R.rdi);
 		break;
 
 	case SYS_FILESIZE:
-		f->R.rax = filesize((int)f->R.rdi);
+		f->R.rax = filesize ((int)f->R.rdi);
 		break;
 
 	case SYS_READ:
-        f->R.rax = read((int) f->R.rdi, (void *) f->R.rsi, (unsigned) f->R.rdx);
+        f->R.rax = read ((int) f->R.rdi, (void *) f->R.rsi, (unsigned) f->R.rdx);
         break;
 
 	case SYS_WRITE:
@@ -248,13 +250,15 @@ syscall_handler (struct intr_frame *f UNUSED) {
 		break;
 
 	case SYS_SEEK:
+		seek ((int) f->R.rdi, (unsigned) f->R.rsi);
 		break;
 
 	case SYS_TELL:
+		f->R.rax = tell ((int) f->R.rdi);
 		break;
 
 	case SYS_CLOSE:
-		close((int)f->R.rdi);
+		close ((int)f->R.rdi);
 		break;
 
 	default:
@@ -408,4 +412,25 @@ read (int fd, void *buffer, unsigned size){
 static tid_t 
 fork (const char *thread_name, 	struct intr_frame *f){
 	return process_fork(thread_name, f);
+}
+
+static void seek (int fd, unsigned position){
+	if (fd_row_find(fd) != NULL) {
+		lock_acquire(&filesys_lock);
+		file_seek(fd_row_find(fd)->file, position);
+		lock_release(&filesys_lock);
+	}else {
+		return;
+	}
+}
+
+static unsigned tell (int fd){
+	if (fd_row_find(fd) != NULL) {
+		lock_acquire(&filesys_lock);
+		int res = file_tell(fd_row_find(fd)->file);
+		lock_release(&filesys_lock);
+		return res;
+	}else {
+		return (unsigned) -1;
+	}
 }
