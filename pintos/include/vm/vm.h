@@ -46,8 +46,7 @@ struct page {
 	void *va;              /* 가상주소 Address in terms of user space */
 	struct frame *frame;   /* Back reference for frame */
 	bool rw;
-	int num;
-
+	int num ; //매핑 총 페이지 개수
 	/* Your implementation */
 	struct hash_elem hash_elem;	// spt 해시테이블 연결고리 
 	/* Per-type data are binded into the union.

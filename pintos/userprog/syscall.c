@@ -127,11 +127,21 @@ syscall_handler (struct intr_frame *f) {
 			f->R.rax = dup2((int)f->R.rdi, (int)f->R.rsi);
 			break;
 
+		case SYS_MMAP:
+			// mmap();
+			
+			struct file *file = fd_to_file(f->R.r10);//이건 int 잖아
+			f->R.rax = do_mmap(f->R.rdi,f->R.rsi,f->R.rdx,file,f->R.r8);
+			break;
+
 		default:
 			exit(-1);
 			break;
 	}
 }
+
+
+
 
 static bool check_address(const char *file)
 {	
@@ -489,6 +499,8 @@ check_file(const char *file){
 		}
 	return false;
 }
+
+
 
 int dup2(int oldfd, int newfd){
 	struct thread *t = thread_current();
