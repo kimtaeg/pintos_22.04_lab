@@ -15,11 +15,13 @@
 /* Initializes the virtual memory subsystem by invoking each subsystem's
  * intialize codes. */
 struct list frame_table;
+static struct lock frame_lock;
 
 void
 vm_init (void) {
 	vm_anon_init ();
 	vm_file_init ();
+	lock_init (&frame_lock);
 #ifdef EFILESYS  /* For project 4 */
 	pagecache_init ();
 #endif
@@ -141,6 +143,19 @@ spt_insert_page (struct supplemental_page_table *spt UNUSED, //인설트 담당
 }
 
 void
+vm_frame_remove (struct frame *frame) {
+	if (frame == NULL)
+		return;
+
+	lock_acquire (&frame_lock);
+	list_remove (&frame->frame_elem);
+	lock_release (&frame_lock);
+
+	palloc_free_page (frame->kva);
+	free (frame);
+}
+
+void
 spt_remove_page (struct supplemental_page_table *spt, struct page *page) {
 	hash_delete(&spt->hash_list, &page->hash_elem);
 	vm_dealloc_page (page);
@@ -235,6 +250,7 @@ vm_get_frame (void) {
 	// 할당 프레임 반환
 	return frame;
 }
+
 
 /* Growing the stack. */
 /* addr이 더 이상 fault 주소가 아니도록 하나 이상의 
@@ -394,7 +410,7 @@ supplemental_page_table_copy (struct supplemental_page_table *dst,
 		struct page *parent_page = hash_entry (hash_cur (&i), struct page, hash_elem);
 		enum vm_type type = VM_TYPE (parent_page->operations->type);
 
-		if (type == VM_UNINIT) {
+		if (type == VM_UNINIT) { // 여기서 uninit
 			struct uninit_page *parent_uninit = &parent_page->uninit;
 			struct vm_entry *child_entry = NULL;
 
@@ -431,6 +447,7 @@ supplemental_page_table_copy (struct supplemental_page_table *dst,
 			child_page->num = parent_page->num;
 		}
 		else if (type == VM_FILE) {
+			
 			continue;
 		}
 	}
