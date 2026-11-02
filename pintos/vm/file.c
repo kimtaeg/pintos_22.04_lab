@@ -26,7 +26,6 @@ bool
 file_backed_initializer (struct page *page, enum vm_type type, void *kva) {
 	/* Set up the handler */
 	page->operations = &file_ops;
-
 	struct file_page *file_page = &page->file;
 }
 
@@ -107,15 +106,4 @@ do_munmap (void *addr) {
 		count ++;  // count를 증가시킴
 	}
 	file_close(file); // 반복문을 통하여 전체 페이지를 전부 없앴기 때문에 file을 닫음
-	// 파일 구조체에 해당하는 페이지만큼 반복해야 함 -> length 등을 활용하여 전체 페이지 수를 알아야 함
-	/*
-	1. dirty 페이지 -> file에 다시 써줘야 함 (pml4_is_dirty)
-	2. 페이지 테이블 매핑 해제 (pml4_clear_page)
-	- spt에서 페이지 제거
-	- 하드웨어 페이지 테이블에서 제거
-	3. 매핑 전체 처리해야 함
-	- addr 한 페이지만 아니라 그 mmap이 차지한 연속된 모든 페이지를 순회하여 위 작업을 반복
-	
-	spt_remove_page->vm_dealloc_page->destroy(page)->file_backed_destroy 순 호출
-*/
 }
