@@ -60,6 +60,7 @@ vm_alloc_page_with_initializer (enum vm_type type, void *upage, bool writable,
 
 	ASSERT (VM_TYPE(type) != VM_UNINIT)
 	struct page* new_page = malloc(sizeof(struct page));
+	if (new_page == NULL) return false;
 	struct supplemental_page_table *spt = &thread_current ()->spt;
 	// 페이지 생성을 위쪽에서 하고, 
 	/*
@@ -409,6 +410,10 @@ supplemental_page_table_copy (struct supplemental_page_table *dst,
 				free (child_entry);
 				return false;
 			}
+			struct page *child_page = spt_find_page (dst, parent_page->va);
+			if (child_page == NULL)
+				return false;
+			child_page->num = parent_page->num;
 		}
 		else if (type == VM_ANON) {
 			if (parent_page->frame == NULL)
@@ -416,12 +421,14 @@ supplemental_page_table_copy (struct supplemental_page_table *dst,
 
 			if (!vm_alloc_page (VM_ANON, parent_page->va, parent_page->rw))
 				return false;
-
+			
 			struct page *child_page = spt_find_page (dst, parent_page->va);
+			
 			if (child_page == NULL || !vm_do_claim_page (child_page))
 				return false;
 
 			memcpy (child_page->frame->kva, parent_page->frame->kva, PGSIZE);
+			child_page->num = parent_page->num;
 		}
 		else if (type == VM_FILE) {
 			continue;
