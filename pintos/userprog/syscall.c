@@ -62,6 +62,10 @@ syscall_handler (struct intr_frame *f) {
 		thread_current()->user_rsp = f->rsp;
 
 	switch (f->R.rax) {
+		case SYS_MUNMAP:
+			munmap((void *) f->R.rdi);
+			break;
+
 		case SYS_HALT:
 			halt ();
 			break;
@@ -516,4 +520,10 @@ int dup2(int oldfd, int newfd){
 	c_fdt[newfd]->share++;
 
 	return newfd;
+}
+
+void
+munmap(void *addr){
+	if ((addr == NULL) || (!is_user_vaddr(addr))) return exit(-1);
+	return do_munmap(addr);
 }
