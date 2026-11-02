@@ -66,43 +66,53 @@ lazy_load_segment (struct page *page, void *aux) {
 void *
 do_mmap (void *addr, size_t length, int writable,
 		struct file *file, off_t offset) {
-		/*하는일 : 
-		일단 원래 는 디스크에서 물리메모리 에 커널버퍼라는 곳에 올리고 유저버퍼에 디스크 파일을 다시 옮겨야했음
-		즉 다시말해서 RAM 안에서 2번의 움직임이 필요하다. 유저 버퍼에 파일이 VM 버퍼로 가는거지 
-		순서가 매핑된척 -> 사용 -> 폴트 -> 프레임할당 + 디스크 올림 -> 다시*/
-		//이게 맞는지 검사 정렬된 상태인지 길이 등등
+		struct thread *thread = thread_current();
+		
 		int64_t addr_map = addr;
 		if(length <= 0 ) return NULL;
 		if (addr_map % PAGE_SIZE == 0 && addr_map!=0){ //정렬시켰는지 확인
 			int pagenum = (length + PAGE_SIZE - 1) / PAGE_SIZE; //나눈다음 페이지 개수 4KB 크기
-			
-			int64_t off = offset;
-			bool bool_mmap ;
-			int64_t in = length;
-			void *aux;
-			for (int i=0;i<pagenum;i++){ //페이지 개수만큼 보내기
-			struct vm_entry *file_page = malloc(sizeof(struct vm_entry)); //말록으로 힙에 할당하기
-			file_page->offset = off; //VM_entry 에 오프셋을 off로 바꾸기
-			if(in>=PAGE_SIZE)file_page->zero_bytes = 0;
-			file_page->file = file_reopen(file);
 
-				if (in>=PAGE_SIZE){ //만약 길이가 4KB 와 같거나 크다면
-					file_page->read_bytes = PAGE_SIZE;
-					
-					in -= PAGE_SIZE;
+			int64_t off = offset;
+			int64_t in = length;
+			int64_t size = file_length(file);
+			// struct file *file_struct = file_reopen(file);
+			struct file_page file_page;//구지 말록으로 할 필요 없음
+			file_page.file = file_reopen(file); //한번만 open 시키기 위해 반복문 밖에 설치
+
+
+			for (int i=0;i<pagenum;i++){ //페이지 개수만큼 보내기
+				//왜 vm_entry 냐면 aux를 가져오기 위해서 loazy_load_sement 를 사용하는데 이게 vm_entry로 매서로 가짐 그래서 vmn_entry로 하는거
+				struct vm_entry *vm_entry = malloc(sizeof(struct vm_entry)); //말록으로 힙에 할당하기
+				vm_entry->file = file_page.file;
+				vm_entry->offset = off; //돌때마다 하기
+				
+				if (size>=PAGE_SIZE){ //만약 길이가 4KB 와 같거나 크다면
+					vm_entry->read_bytes = PAGE_SIZE;
+					vm_entry->zero_bytes = 0;
+					size -= PAGE_SIZE;
 				}
-				else if(in<PAGE_SIZE){ //만약 길이가 4KB 보다 작다면 즉 마지막일때
-					file_page->read_bytes = in;
-					in -= PAGE_SIZE;
-					file_page->zero_bytes = abs(in);
+
+				else if(size<PAGE_SIZE && size > 0){ //만약 길이가 4KB 보다 작다면 즉 마지막일때
+					vm_entry->read_bytes = size;
+					size -= PAGE_SIZE;
+					vm_entry->zero_bytes = abs(size);
+				}
+				else{//만약 사이즈가 다 떨어졌다면
+					vm_entry->read_bytes =0;
+					vm_entry->zero_bytes =PAGE_SIZE;
+				}
+				vm_entry->offset += PAGE_SIZE*i;//처음에 0 두번째에 4000 세번쩨에 8000 마지막은 끝
+
+
+				if(!vm_alloc_page_with_initializer(VM_FILE,addr + i*PAGE_SIZE,writable,lazy_load_segment,vm_entry)) {	
+					free(vm_entry); //여러번 시켜야 하는데 일단 설계만
+					return NULL; // VM에 페이지 만들기 실패하면 NULL 반환
 				}
 				
-				vm_alloc_page_with_initializer(VM_FILE,addr + i*PAGE_SIZE,writable,lazy_load_segment,file_page); // VM에 페이지 만들기
-				off += PAGE_SIZE; //다음부터는 계속 커져야 하니까 += 로 넣기
-				file_page->offset = off;
-				// vm_alloc_page(VM_FILE,addr + i*PAGE_SIZE,writable);
-				// in -= PAGE_SIZE;//페에지 크기
 			}
+			struct page *page = spt_find_page(&thread->spt,addr); //spt 안에 페이지 가져오기
+			page->num = pagenum; //page 안에 페이지 총 개수 넣기
 			return addr;
 		}
 		else{

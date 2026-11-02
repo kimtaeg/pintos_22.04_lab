@@ -124,8 +124,9 @@ syscall_handler (struct intr_frame *f) {
 
 		case SYS_MMAP:
 			// mmap();
-
-			do_mmap(f->R.rdi,f->R.rsi,f->R.rdx,open(f->R.r10),f->R.r8);
+			
+			struct file *file = fd_to_file(f->R.r10);//이건 int 잖아
+			f->R.rax = do_mmap(f->R.rdi,f->R.rsi,f->R.rdx,file,f->R.r8);
 			break;
 
 		default:
