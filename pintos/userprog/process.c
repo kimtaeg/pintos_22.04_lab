@@ -972,7 +972,8 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 		size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
 		struct vm_entry *v_entry = malloc(sizeof(struct vm_entry));
-
+		// struct supplemental_page_table *spt = &thread_current()->spt;
+		// printf("hash : %p\n", &spt->hash_list);
 		v_entry -> zero_bytes = page_zero_bytes;
 		v_entry -> read_bytes = page_read_bytes;
 		v_entry -> offset = ofs;

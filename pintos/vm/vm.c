@@ -60,6 +60,7 @@ vm_alloc_page_with_initializer (enum vm_type type, void *upage, bool writable,
 
 	ASSERT (VM_TYPE(type) != VM_UNINIT)
 	struct page* new_page = malloc(sizeof(struct page));
+	if (new_page == NULL) return false;
 	struct supplemental_page_table *spt = &thread_current ()->spt;
 	// 페이지 생성을 위쪽에서 하고, 
 	/*
@@ -381,11 +382,59 @@ supplemental_page_table_init (struct supplemental_page_table *spt UNUSED) {
 		}
 }
 
-/* Copy supplemental page table from src to dst */
 bool
-supplemental_page_table_copy (struct supplemental_page_table *dst UNUSED,
-		struct supplemental_page_table *src UNUSED) {
+supplemental_page_table_copy (struct supplemental_page_table *dst,
+		struct supplemental_page_table *src) {
+	
+	struct hash_iterator i;
 
+	hash_first (&i, &src->hash_list);
+
+	while (hash_next (&i)) {
+		struct page *parent_page = hash_entry (hash_cur (&i), struct page, hash_elem);
+		enum vm_type type = VM_TYPE (parent_page->operations->type);
+
+		if (type == VM_UNINIT) {
+			struct uninit_page *parent_uninit = &parent_page->uninit;
+			struct vm_entry *child_entry = NULL;
+
+			if (parent_uninit->aux != NULL) {
+				child_entry = malloc (sizeof (struct vm_entry));
+				if (child_entry == NULL)
+					return false;
+				memcpy (child_entry, parent_uninit->aux, sizeof (struct vm_entry));
+			}
+
+			if (!vm_alloc_page_with_initializer (parent_uninit->type, parent_page->va,
+					parent_page->rw, parent_uninit->init, child_entry)) {
+				free (child_entry);
+				return false;
+			}
+			struct page *child_page = spt_find_page (dst, parent_page->va);
+			if (child_page == NULL)
+				return false;
+			child_page->num = parent_page->num;
+		}
+		else if (type == VM_ANON) {
+			if (parent_page->frame == NULL)
+				return false;
+
+			if (!vm_alloc_page (VM_ANON, parent_page->va, parent_page->rw))
+				return false;
+			
+			struct page *child_page = spt_find_page (dst, parent_page->va);
+			
+			if (child_page == NULL || !vm_do_claim_page (child_page))
+				return false;
+
+			memcpy (child_page->frame->kva, parent_page->frame->kva, PGSIZE);
+			child_page->num = parent_page->num;
+		}
+		else if (type == VM_FILE) {
+			continue;
+		}
+	}
+	return true;
 }
 
 /* Free the resource hold by the supplemental page table */
@@ -407,7 +456,6 @@ page_less(const struct hash_elem *elem1, const struct hash_elem *elem2, void *au
 	return false;
 	
 }
-
 // spt 비울때 페이지 하나씩 해제
 void 
 page_destructor(struct hash_elem *e, void *aux UNUSED){
