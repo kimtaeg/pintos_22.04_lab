@@ -156,6 +156,7 @@ vm_get_victim (void) { //내 생각에는 이게 희생시킬 프레임을 고�
 	/* TODO: The policy for eviction is up to you. */
 	if (list_begin(&frame_table) == list_tail(&frame_table))return NULL; //만약 맨 앞이 없다면 NULL 반환
 	victim_elem = list_begin(&frame_table);
+	list_pop_front(&frame_table);//리스트 가장 첫번째 제거하기
 	victim = list_entry(victim_elem, struct frame , frame_elem);
 	//만약 맨 앞에 없다면 NULL이 들어갈려나?
 	return victim;
@@ -168,13 +169,18 @@ vm_get_victim (void) { //내 생각에는 이게 희생시킬 프레임을 고�
 static struct frame *
 vm_evict_frame (void) { //고른 프레임을 실제로 쫓아내기
 	struct frame *victim UNUSED = vm_get_victim ();//이게 victim 이 희생자 프레임
-	if(victim != NULL){//만약 희생자 페이지에 잘 들어갔다면
-		swap_out(victim->page); //프레임의 페이지 쫓아내기
-		return victim;
-	}
+	if(victim == NULL) return NULL;
+	if(victim->page == NULL)return NULL;
+	if(!swap_out(victim->page))return NULL; //프레임의 페이지 쫓아내기 //만약 false 실패하면 NULL 반환
+	struct thread *thread = thread_current();
+	pml4_clear_page(thread->pml4,victim->page->va); //PML4 에서도 삭제
+	victim->page->frame = NULL ;
+	victim->page = NULL;
+	//서로 연결되어있는걸 끊어버리기	
+	return victim;
 	/* TODO: swap out the victim and return the evicted frame. */
 	
-	return NULL;
+	
 }
 
 /* palloc() 및 프레임 가져오기. 사용 가능한 페이지가 없으면 페이지를 제거합니다
