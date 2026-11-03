@@ -34,13 +34,38 @@ file_backed_initializer (struct page *page, enum vm_type type, void *kva) {
 /* Swap in the page by read contents from the file. */
 static bool
 file_backed_swap_in (struct page *page, void *kva) {
-	struct file_page *file_page UNUSED = &page->file;
+	struct file_page *file_page = &page->file;
+	// 지금 프레임이 끊긴 상황 (out 선행)
+	// 프레임 연결만 하면 됨
+	// file_read_at()으로 offset 위치로 가서 read_bytes + zero_bytes 
+	off_t ofs = file_page -> offset;
+	size_t read_bytes = file_page -> read_bytes;
+	size_t zero_bytes = file_page -> zero_bytes;
+	struct file * file = file_page->file;
+	if (file_read_at(file, kva, read_bytes, ofs)!=(int32_t)read_bytes){
+		return false;
+	}
+	memset(kva+read_bytes, 0, zero_bytes);
+	return true;
 }
 
 /* Swap out the page by writeback contents to the file. */
 static bool
 file_backed_swap_out (struct page *page) {
-	struct file_page *file_page UNUSED = &page->file;
+	struct file_page *file_page = &page->file;
+	// dirty bit check 하고 만약 사용했다면 -> 파일에 다시 업데이트
+	// pml4_claer_page로 매핑을 끊고, dirty bit 초기화
+	// swap out 시에 프레임 쪽만 끊어버림
+	// thread_current() -> pml4랑 evict_page -> pml4랑 다를 수 있음 아 십
+	if (pml4_is_dirty(page->evict_thread->pml4, page->va)){
+		file_write_at(file_page -> file, page->frame->kva, file_page->read_bytes, file_page->offset);
+		pml4_set_dirty(page->evict_thread->pml4, page->va, false);
+	}
+	page->frame->page = NULL;
+	page->frame = NULL;
+
+	pml4_clear_page(page->evict_thread->pml4, page->va);
+	return true;
 }
 
 /* Destory the file backed page. PAGE will be freed by the caller. */

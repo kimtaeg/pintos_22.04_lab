@@ -51,6 +51,7 @@ struct page {
 	struct hash_elem hash_elem;	// spt 해시테이블 연결고리 
 	/* Per-type data are binded into the union.
 	 * Each function automatically detects the current union */
+	struct thread * evict_thread; // swap out 시에 pml4 추적을 위하여 필요함
 	union {
 		struct uninit_page uninit;
 		struct anon_page anon;
