@@ -63,6 +63,7 @@ file_backed_destroy (struct page *page) {
 	pml4_clear_page(t->pml4, page->va);
 	// 프레임테이블에서 제거 -> 물리 메모리 해제 -> 구조체 해제 -> null 순서 중요
 	vm_frame_remove(page->frame);
+	// list_remove(&page->frame->frame_elem);
 	palloc_free_page(page->frame->kva);
 	free(page->frame);
 	page->frame = NULL;
@@ -89,25 +90,23 @@ void *
 do_mmap (void *addr, size_t length, int writable,
 		struct file *file, off_t offset) {
 		struct thread *thread = thread_current();
-		
 		int64_t addr_map = addr;
 		if(length <= 0 ) return NULL;
 		if (addr_map % PAGE_SIZE == 0 && addr_map!=0){ //정렬시켰는지 확인
 			int pagenum = (length + PAGE_SIZE - 1) / PAGE_SIZE; //나눈다음 페이지 개수 4KB 크기
 
-			int64_t off = offset;
 			int64_t in = length;
-			int64_t size = file_length(file);
+			int64_t size = file_length(file);	
 			// struct file *file_struct = file_reopen(file);
 			struct file_page file_page;//구지 말록으로 할 필요 없음
 			file_page.file = file_reopen(file); //한번만 open 시키기 위해 반복문 밖에 설치
-
+			file_page.zero_bytes = length - size; //매핑 길이 - 파일 크기 해서 zero 넣기
 
 			for (int i=0;i<pagenum;i++){ //페이지 개수만큼 보내기
 				//왜 vm_entry 냐면 aux를 가져오기 위해서 loazy_load_sement 를 사용하는데 이게 vm_entry로 매서로 가짐 그래서 vmn_entry로 하는거
 				struct vm_entry *vm_entry = malloc(sizeof(struct vm_entry)); //말록으로 힙에 할당하기
 				vm_entry->file = file_page.file;
-				vm_entry->offset = off; //돌때마다 하기
+				vm_entry->offset = offset; //돌때마다 하기
 				
 				if (size>=PAGE_SIZE){ //만약 길이가 4KB 와 같거나 크다면
 					vm_entry->read_bytes = PAGE_SIZE;

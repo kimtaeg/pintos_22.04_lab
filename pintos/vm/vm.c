@@ -147,11 +147,17 @@ spt_remove_page (struct supplemental_page_table *spt, struct page *page) {
 	return true;
 }
 
+
 /* Get the struct frame, that will be evicted. */
 static struct frame *
-vm_get_victim (void) {
+vm_get_victim (void) { //내 생각에는 이게 희생시킬 프레임을 고른다.
 	struct frame *victim = NULL;
-	 /* TODO: The policy for eviction is up to you. */
+	struct list_elem *victim_elem ;
+	/* TODO: The policy for eviction is up to you. */
+	if (list_begin(&frame_table) == list_tail(&frame_table))return NULL; //만약 맨 앞이 없다면 NULL 반환
+	victim_elem = list_begin(&frame_table);
+	victim = list_entry(victim_elem, struct frame , frame_elem);
+	//만약 맨 앞에 없다면 NULL이 들어갈려나?
 	return victim;
 }
 
@@ -160,10 +166,14 @@ vm_get_victim (void) {
  * 페이지 교체 알고리즘
 */
 static struct frame *
-vm_evict_frame (void) {
-	struct frame *victim UNUSED = vm_get_victim ();
+vm_evict_frame (void) { //고른 프레임을 실제로 쫓아내기
+	struct frame *victim UNUSED = vm_get_victim ();//이게 victim 이 희생자 프레임
+	if(victim != NULL){//만약 희생자 페이지에 잘 들어갔다면
+		swap_out(victim->page); //프레임의 페이지 쫓아내기
+		return victim;
+	}
 	/* TODO: swap out the victim and return the evicted frame. */
-
+	
 	return NULL;
 }
 
