@@ -15,7 +15,7 @@
 /* Initializes the virtual memory subsystem by invoking each subsystem's
  * intialize codes. */
 struct list frame_table;
-static struct lock frame_lock;
+struct lock frame_lock;
 
 void
 vm_init (void) {

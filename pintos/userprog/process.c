@@ -26,6 +26,7 @@
 #ifdef VM
 #include "vm/vm.h"
 #endif
+#include "userprog/syscall.h"
 
 #define USERPROG 1
 static bool setup_stack (struct intr_frame *if_);
@@ -301,7 +302,9 @@ __do_fork (void *aux) {
 
 		/* 일반 파일일 때만 file_duplicate */
 		if (new_desc->fT == FD_FILE) {
-			new_desc->file = file_duplicate(parent->fdt[i]->file);
+			lock_acquire (&file_lock);
+			new_desc->file = file_duplicate (parent->fdt[i]->file);
+			lock_release (&file_lock);
 
 			if (new_desc->file == NULL) {
 				free(new_desc);
@@ -501,34 +504,41 @@ process_exit (void) {
 
 	if (curr->pml4 != NULL)
 		printf ("%s: exit(%d)\n", curr->name, curr->exit_status);
-	
-	process_cleanup ();
-	file_close (curr->running_file);
 
-	if (curr -> fdt != NULL){
-		for (int i= 0; i<FILE_MAX; i++){
-			if (curr->fdt[i] != NULL){
-				if (curr->fdt[i]->share == 1){
-					if (curr->fdt[i]->fT == FD_FILE){
-						file_close(curr -> fdt[i]->file);
-					}
-					free(curr->fdt[i]);
+	process_cleanup ();
+
+	/* 파일 정리 구간: lock으로 보호 */
+	bool held = lock_held_by_current_thread (&file_lock);
+	if (!held) lock_acquire (&file_lock);
+
+	file_close (curr->running_file);
+	curr->running_file = NULL;
+
+	if (curr->fdt != NULL) {
+		for (int i = 0; i < FILE_MAX; i++) {
+			if (curr->fdt[i] != NULL) {
+				if (curr->fdt[i]->share == 1) {
+					if (curr->fdt[i]->fT == FD_FILE)
+						file_close (curr->fdt[i]->file);
+					free (curr->fdt[i]);
 				}
-				else{ 
-					if(curr->fdt[i]->share >= 2){
-						curr->fdt[i]->share --;
-					}
+				else if (curr->fdt[i]->share >= 2) {
+					curr->fdt[i]->share--;
 				}
 			}
 		}
+		free (curr->fdt);
+		curr->fdt = NULL;
 	}
-	free(curr -> fdt);
-	while (!list_empty (&curr->childs)) { // 자식 죽기 직전에 부모 기다림, thread_exit까지 간다면 struct thread가 담긴 페이지 해제
-		// 부모가 나중에 wait해서 exit_status를 읽으려 할 시 이미 해제된 메모리를 읽음
+
+	lock_release (&file_lock);   /* held였어도 종료 시점엔 반드시 풀기 */
+
+	/* 자식 정리 */
+	while (!list_empty (&curr->childs)) {
 		struct list_elem *e = list_pop_front (&curr->childs);
 		struct thread *c = list_entry (e, struct thread, child_elem);
-		sema_up (&c->child_sema); //이 부분이 부모가 더 이상 너를 필요로 하지 않는다고 말하는 부분 
-	} // 자식이 바로 죽는 것이 아닌 부모가 exit_status를 읽기 위해 좀비 상태로 버티는 중
+		sema_up (&c->child_sema);
+	}
 
 	sema_up (&curr->parent_sema);    // 부모 깨우기
 	sema_down (&curr->child_sema);   // 부모가 status 읽을 때까지 대기
@@ -644,7 +654,8 @@ load (const char *file_name, struct intr_frame *if_) {
 	bool success = false;
 	int i;
 
-
+	bool held = lock_held_by_current_thread (&file_lock);   
+	if (!held) lock_acquire (&file_lock);                 
 
 	/* Allocate and activate page directory. */
 	t->pml4 = pml4_create ();
@@ -652,30 +663,24 @@ load (const char *file_name, struct intr_frame *if_) {
 		goto done;
 	process_activate (thread_current ());
 
-
-	/* Open executable file. */
 	file = filesys_open (file_name);
 	if (file == NULL) {
 		printf ("load: %s: open failed\n", file_name);
 		goto done;
 	}
-	//추가
-	file_deny_write(file); //실행 중 읽기 불가
-	t->running_file = file; //스레드가 실행중인 파일 저장
+	file_deny_write (file);      
+	t->running_file = file;  
 
-	/* Read and verify executable header. */
 	if (file_read (file, &ehdr, sizeof ehdr) != sizeof ehdr
 			|| memcmp (ehdr.e_ident, "\177ELF\2\1\1", 7)
 			|| ehdr.e_type != 2
-			|| ehdr.e_machine != 0x3E // amd64
+			|| ehdr.e_machine != 0x3E
 			|| ehdr.e_version != 1
 			|| ehdr.e_phentsize != sizeof (struct Phdr)
 			|| ehdr.e_phnum > 1024) {
 		printf ("load: %s: error loading executable\n", file_name);
 		goto done;
 	}
-
-	/* Read program headers. */
 	file_ofs = ehdr.e_phoff;
 	for (i = 0; i < ehdr.e_phnum; i++) {
 		struct Phdr phdr;
@@ -693,7 +698,6 @@ load (const char *file_name, struct intr_frame *if_) {
 			case PT_PHDR:
 			case PT_STACK:
 			default:
-				/* Ignore this segment. */
 				break;
 			case PT_DYNAMIC:
 			case PT_INTERP:
@@ -707,14 +711,10 @@ load (const char *file_name, struct intr_frame *if_) {
 					uint64_t page_offset = phdr.p_vaddr & PGMASK;
 					uint32_t read_bytes, zero_bytes;
 					if (phdr.p_filesz > 0) {
-						/* Normal segment.
-						 * Read initial part from disk and zero the rest. */
 						read_bytes = page_offset + phdr.p_filesz;
 						zero_bytes = (ROUND_UP (page_offset + phdr.p_memsz, PGSIZE)
 								- read_bytes);
 					} else {
-						/* Entirely zero.
-						 * Don't read anything from disk. */
 						read_bytes = 0;
 						zero_bytes = ROUND_UP (page_offset + phdr.p_memsz, PGSIZE);
 					}
@@ -728,26 +728,18 @@ load (const char *file_name, struct intr_frame *if_) {
 		}
 	}
 
-	/* Set up stack. */
 	if (!setup_stack (if_))
 		goto done;
 
 	/* Start address. */
 	if_->rip = ehdr.e_entry;
 
-	/* TODO: Your code goes here.
-	 * TODO: Implement argument passing (see project2/argument_passing.html). */
-
-
-
 	success = true;
 
 done:
-	/* We arrive here whether the load is successful or not. */
-	//file_close (file); 이 로직은 로딩하자마자 파일을 닫아버림, 그래서 file_deny_write가 취소됨
+	if (!held) lock_release (&file_lock);                    
 	return success;
 }
-
 
 
 
@@ -932,7 +924,12 @@ lazy_load_segment (struct page *page, void *aux) {
 	struct vm_entry *aux1 = (struct vm_entry *)aux;
 	uint8_t *kva = page->frame->kva;
 
-	if (file_read_at(aux1->file,kva, aux1->read_bytes, aux1->offset)!=(int32_t)aux1->read_bytes){
+	bool held = lock_held_by_current_thread (&file_lock);
+	if (!held) lock_acquire (&file_lock);
+	int n = file_read_at(aux1->file,kva, aux1->read_bytes, aux1->offset);
+	if (!held) lock_release (&file_lock);
+
+	if (n!=(int32_t)aux1->read_bytes){
 		free(aux1);
 		return false;
 	}

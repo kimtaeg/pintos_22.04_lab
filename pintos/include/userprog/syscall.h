@@ -1,11 +1,12 @@
 #include <stdbool.h>
+#include "threads/synch.h"
 
 typedef int pid_t;
 #ifndef USERPROG_SYSCALL_H
 #define USERPROG_SYSCALL_H
 
 void syscall_init (void);
-
+extern struct lock file_lock;
 void halt (void);
 void exit (int status);
 pid_t fork (const char *thread_name);

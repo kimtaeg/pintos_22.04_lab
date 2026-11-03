@@ -21,7 +21,7 @@
 void syscall_entry (void);
 void syscall_handler (struct intr_frame *);
 
-static struct lock file_lock; 
+struct lock file_lock; 
 static void check_buffer (const void *buffer, unsigned size, bool writeable);
 static bool check_address(const char *file);
 static struct file *fd_to_file (int fd);
@@ -127,13 +127,24 @@ syscall_handler (struct intr_frame *f) {
 			f->R.rax = dup2((int)f->R.rdi, (int)f->R.rsi);
 			break;
 
-		case SYS_MMAP:
-			// mmap();
-			
-			struct file *file = fd_to_file(f->R.r10);//이건 fd 번호를 file 형태로 변환
-			if (file ==NULL) exit(-1); //만약 file 로 변환 시킨게 안된다면 종료
-			f->R.rax = do_mmap(f->R.rdi,f->R.rsi,f->R.rdx,file,f->R.r8);
+		case SYS_MMAP: {
+			int fd = f->R.r10;
+			struct thread *t = thread_current ();
+			struct file *file = NULL;
+
+			if (fd >= 0 && fd < FILE_MAX && t->fdt != NULL) {
+				struct file_descriptor *desc = t->fdt[fd];
+				if (desc != NULL && desc->fT == FD_FILE)   /* stdin/stdout 제외 */
+					file = desc->file;
+			}
+
+			if (file == NULL) {
+				f->R.rax = 0;           /* MAP_FAILED */
+				break;
+			}
+			f->R.rax = (uint64_t) do_mmap ((void *) f->R.rdi, f->R.rsi, f->R.rdx, file, f->R.r8);
 			break;
+		}
 
 		default:
 			exit(-1);
@@ -263,7 +274,9 @@ open (const char *file){
 	}
 	
 
-	struct file *f = filesys_open(file);
+	lock_acquire (&file_lock);
+	struct file *f = filesys_open (file);
+	lock_release (&file_lock);
 	if(f == NULL) return -1;
 
 	/*빈 0,1은 쓰니까 스킵*/
@@ -272,7 +285,9 @@ open (const char *file){
 			struct file_descriptor *desc = malloc(sizeof(struct file_descriptor));
 
             if (desc == NULL) {
-                file_close(f);
+				lock_acquire (&file_lock);
+				file_close (f);
+				lock_release (&file_lock);
                 return -1;
             }
 
@@ -286,7 +301,9 @@ open (const char *file){
 	}
 
 	/*파일 저장소 없음*/
-	file_close(f);
+	lock_acquire (&file_lock);
+	file_close (f);
+	lock_release (&file_lock);
 	return -1;
 }
 
@@ -433,7 +450,9 @@ close (int fd){
 		t->fdt[fd] = NULL;
 	}else{
 		if(file_des->fT == FD_FILE){
-			file_close(file_des->file);
+			lock_acquire (&file_lock);
+			file_close (file_des->file);
+			lock_release (&file_lock);
 		}
 		free(file_des);
 		t->fdt[fd] = NULL;
