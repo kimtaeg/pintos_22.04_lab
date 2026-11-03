@@ -70,18 +70,17 @@ file_backed_swap_out (struct page *page) {
 	// dirty bit check 하고 만약 사용했다면 -> 파일에 다시 업데이트
 	// pml4_claer_page로 매핑을 끊고, dirty bit 초기화
 	// swap out 시에 프레임 쪽만 끊어버림
-	// thread_current() -> pml4랑 evict_page -> pml4랑 다를 수 있음 아 십
-	if (pml4_is_dirty(page->evict_thread->pml4, page->va)){
+	if (pml4_is_dirty(page->owner->pml4, page->va)){
 		bool held = lock_held_by_current_thread (&file_lock);
 		if (!held) lock_acquire (&file_lock);
 		file_write_at(file_page -> file, page->frame->kva, file_page->read_bytes, file_page->offset);
 		if (!held) lock_release (&file_lock);
-		pml4_set_dirty(page->evict_thread->pml4, page->va, false);
+		pml4_set_dirty(page->owner->pml4, page->va, false);
 	}
 	page->frame->page = NULL;
 	page->frame = NULL;
 
-	pml4_clear_page(page->evict_thread->pml4, page->va);
+	pml4_clear_page(page->owner->pml4, page->va);
 	return true;
 }
 
@@ -108,11 +107,7 @@ file_backed_destroy (struct page *page) {
 	pml4_clear_page(t->pml4, page->va);
 	// 프레임테이블에서 제거 -> 물리 메모리 해제 -> 구조체 해제 -> null 순서 중요
 	// vm_frame_remove(page->frame);
-	lock_acquire (&frame_lock);
-	list_remove(&page->frame->frame_elem);
-	lock_release (&frame_lock);
-	palloc_free_page(page->frame->kva);
-	free(page->frame);
+	vm_frame_remove(page->frame);
 	page->frame = NULL;
 	// 파일은 닫지 않기 -> 매핑의 페이지들이 파일을 공유해서 do munmap에서 한번만 닫으면 됨
 }

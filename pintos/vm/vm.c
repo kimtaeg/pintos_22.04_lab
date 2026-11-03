@@ -15,18 +15,18 @@
 /* Initializes the virtual memory subsystem by invoking each subsystem's
  * intialize codes. */
 struct list frame_table;
-struct lock frame_lock;
+static struct lock frame_table_lock;
 
 void
 vm_init (void) {
 	vm_anon_init ();
 	vm_file_init ();
-	lock_init (&frame_lock);
 #ifdef EFILESYS  /* For project 4 */
 	pagecache_init ();
 #endif
 	register_inspect_intr ();
 	list_init(&frame_table);
+	lock_init(&frame_table_lock);
 	/* DO NOT MODIFY UPPER LINES. */
 	/* TODO: Your code goes here. */
 }
@@ -65,7 +65,6 @@ vm_alloc_page_with_initializer (enum vm_type type, void *upage, bool writable,
 	if (new_page == NULL) return false;
 	struct supplemental_page_table *spt = &thread_current ()->spt;
 	// 페이지 생성을 위쪽에서 하고, 
-	new_page->evict_thread = thread_current();
 	/*
 	page_initializer
 	-> 해당 페이지를 다른 페이지로 바꿔주는 애
@@ -92,6 +91,7 @@ vm_alloc_page_with_initializer (enum vm_type type, void *upage, bool writable,
 			goto err;
 		}
 		new_page->rw = writable;
+		new_page->owner = thread_current();
 		if(spt_insert_page(spt, new_page)==false) {
 			free (new_page);
 			goto err;
@@ -148,9 +148,9 @@ vm_frame_remove (struct frame *frame) {
 	if (frame == NULL)
 		return;
 
-	lock_acquire (&frame_lock);
+	lock_acquire (&frame_table_lock);
 	list_remove (&frame->frame_elem);
-	lock_release (&frame_lock);
+	lock_release (&frame_table_lock);
 
 	palloc_free_page (frame->kva);
 	free (frame);
@@ -170,11 +170,15 @@ vm_get_victim (void) { //내 생각에는 이게 희생시킬 프레임을 고�
 	struct frame *victim = NULL;
 	struct list_elem *victim_elem ;
 	/* TODO: The policy for eviction is up to you. */
-	if (list_begin(&frame_table) == list_tail(&frame_table))return NULL; //만약 맨 앞이 없다면 NULL 반환
-	victim_elem = list_begin(&frame_table);
-	list_pop_front(&frame_table);//리스트 가장 첫번째 제거하기
+	// 다른 스레드가 insert/remove 중일 수 있으니 lock 걸고 꺼냄
+	lock_acquire(&frame_table_lock);
+	if (list_empty(&frame_table)){ //프레임 테이블이 비어 있으면 NULL 반환
+		lock_release(&frame_table_lock);
+		return NULL;
+	}
+	victim_elem = list_pop_front(&frame_table);//리스트 가장 첫번째 제거하기 (FIFO)
+	lock_release(&frame_table_lock);
 	victim = list_entry(victim_elem, struct frame , frame_elem);
-	//만약 맨 앞에 없다면 NULL이 들어갈려나?
 	return victim;
 }
 
@@ -186,11 +190,17 @@ static struct frame *
 vm_evict_frame (void) { //고른 프레임을 실제로 쫓아내기
 	struct frame *victim UNUSED = vm_get_victim ();//이게 victim 이 희생자 프레임
 	if(victim == NULL) return NULL;
-	if(victim->page == NULL)return NULL;
-	if(!swap_out(victim->page))return NULL; //프레임의 페이지 쫓아내기 //만약 false 실패하면 NULL 반환
-	struct thread *thread = thread_current();
-	pml4_clear_page(thread->pml4,victim->page->va); //PML4 에서도 삭제
-	victim->page->frame = NULL ;
+	// file swap_out이 victim->page를 NULL로 만들기 때문에 미리 저장
+	struct page *page = victim->page;
+	if(page == NULL)return NULL;
+	if(!swap_out(page)){ //프레임의 페이지 쫓아내기
+		// 실패하면 테이블에 다시 넣어 두기 (빠진 채로 두면 destroy 때 이중 list_remove)
+		frame_table_insert(&victim->frame_elem);
+		return NULL;
+	}
+	// victim 페이지는 다른 프로세스 것일 수 있으니 owner의 pml4에서 삭제
+	pml4_clear_page(page->owner->pml4, page->va); //PML4 에서도 삭제
+	page->frame = NULL ;
 	victim->page = NULL;
 	//서로 연결되어있는걸 끊어버리기	
 	return victim;
@@ -242,25 +252,30 @@ vm_get_frame (void) {
 	/* 메모리 부족 상황 처리
 	사용 가능한 물리 페이지가 없는 경우*/
 	if(frame->kva == NULL){
-		PANIC("todo");
+		//PANIC("todo");
 		/* 희생 프레임 선택 및 교체
 		vm_evict_frame을 사용함 페이지 교체 알고리즘,
 		교체할 프레임을 선택, 이 프레임을 디스크로*/
 		struct frame *vicim1 = vm_evict_frame();
 		// 예외처리
+		if(vicim1 == NULL){
+			PANIC("out of memory");
+		}
 
 		/* 희생자의 물리 페이지를 재활용
 			교체된 프레임의 물리 주소를 새로운 프레임이 사용*/
 		frame->kva = vicim1->kva;
+		// 이전 데이터가 남아 있으니 PAL_ZERO처럼 0으로 초기화
+		memset(frame->kva, 0, PGSIZE);
 
 		/* 희생자 프레임 구조체 해제 */
 		free(vicim1);
 	}
 	/* 새로운 프레임 초기화 아직 가상페이지와 연결 x */
 	frame->page = NULL;
-	
-	/* 프레임 테이블에 등록 */
-	frame_table_insert(&frame->frame_elem);
+
+	/* 프레임 테이블 등록은 vm_do_claim_page에서 claim이 끝난 뒤에 함
+	   (초기화 안 된 uninit 페이지가 victim으로 뽑히지 않게) */
 
 	ASSERT (frame->page == NULL);
 
@@ -398,7 +413,17 @@ vm_do_claim_page (struct page *page) {
 	}
 	/* TODO: Insert page table entry to map page's VA to frame's PA. */
 	// 실제 페이지 내용 로딩
-	return swap_in (page, frame->kva);
+	if (!swap_in (page, frame->kva)){
+		// 로딩 실패 - 매핑 끊고 프레임 해제 (아직 테이블에 없음)
+		pml4_clear_page(current->pml4, page->va);
+		page->frame = NULL;
+		palloc_free_page(frame->kva);
+		free(frame);
+		return false;
+	}
+	/* 프레임 테이블에 등록 - 페이지가 완전히 준비된 뒤에만 evict 대상이 됨 */
+	frame_table_insert(&frame->frame_elem);
+	return true;
 }
 
 unsigned
@@ -498,7 +523,17 @@ page_destructor(struct hash_elem *e, void *aux UNUSED){
 }
 
 void frame_table_insert(struct list_elem *elem){
-	struct thread *cur = thread_current();
+	// struct thread *cur = thread_current();
+	// list_push_back(&frame_table, elem);
+	// return;
+	lock_acquire(&frame_table_lock);
 	list_push_back(&frame_table, elem);
-	return;
+	lock_release(&frame_table_lock);
 }
+
+// void
+// frame_table_remove(struct frame *frame){
+// 	lock_acquire(&frame_table_lock);
+// 	list_remove(&frame->frame_elem);
+// 	lock_release(&frame_table_lock);
+// }

@@ -34,7 +34,7 @@ enum vm_type {
 
 struct page_operations;
 struct thread;
-extern struct lock frame_lock;
+// extern struct lock frame_lock;
 #define VM_TYPE(type) ((type) & 7)
 
 /* The representation of "page".
@@ -47,11 +47,11 @@ struct page {
 	struct frame *frame;   /* Back reference for frame */
 	bool rw;
 	int num ; //매핑 총 페이지 개수
+	struct thread *owner; // 이 페이지를 가진 스레드
 	/* Your implementation */
 	struct hash_elem hash_elem;	// spt 해시테이블 연결고리 
 	/* Per-type data are binded into the union.
 	 * Each function automatically detects the current union */
-	struct thread * evict_thread; // swap out 시에 pml4 추적을 위하여 필요함
 	union {
 		struct uninit_page uninit;
 		struct anon_page anon;
@@ -126,6 +126,9 @@ void vm_dealloc_page (struct page *page);
 bool vm_claim_page (void *va);
 enum vm_type page_get_type (struct page *page);
 void vm_frame_remove (struct frame *frame);
+
+void frame_table_insert(struct list_elem *elem);
+// void frame_table_remove(struct frame *frame);
 
 #endif  /* VM_VM_H */
 
