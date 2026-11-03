@@ -4,6 +4,8 @@
 #define PAGE_SIZE 4096
 #include "userprog/process.h"
 #include "threads/mmu.h"
+#include "threads/malloc.h"
+#include "userprog/syscall.h"
 
 static bool file_backed_swap_in (struct page *page, void *kva);
 static bool file_backed_swap_out (struct page *page);
@@ -26,9 +28,15 @@ vm_file_init (void) {
 /* Initialize the file backed page */
 bool
 file_backed_initializer (struct page *page, enum vm_type type, void *kva) {
+	struct vm_entry *aux = page->uninit.aux;
 	/* Set up the handler */
 	page->operations = &file_ops;
 	struct file_page *file_page = &page->file;
+	file_page->file = aux->file;
+	file_page->offset = aux->offset;
+	file_page->read_bytes = aux->read_bytes;
+	file_page->zero_bytes = aux->zero_bytes;
+	return true;
 }
 
 /* Swap in the page by read contents from the file. */
@@ -42,7 +50,13 @@ file_backed_swap_in (struct page *page, void *kva) {
 	size_t read_bytes = file_page -> read_bytes;
 	size_t zero_bytes = file_page -> zero_bytes;
 	struct file * file = file_page->file;
-	if (file_read_at(file, kva, read_bytes, ofs)!=(int32_t)read_bytes){
+
+	bool held = lock_held_by_current_thread (&file_lock);
+	if (!held) lock_acquire (&file_lock);
+	int n = file_read_at (file, kva, read_bytes, ofs);
+	if (!held) lock_release (&file_lock);
+
+	if (n!=(int32_t)read_bytes){
 		return false;
 	}
 	memset(kva+read_bytes, 0, zero_bytes);
@@ -58,7 +72,10 @@ file_backed_swap_out (struct page *page) {
 	// swap out 시에 프레임 쪽만 끊어버림
 	// thread_current() -> pml4랑 evict_page -> pml4랑 다를 수 있음 아 십
 	if (pml4_is_dirty(page->evict_thread->pml4, page->va)){
+		bool held = lock_held_by_current_thread (&file_lock);
+		if (!held) lock_acquire (&file_lock);
 		file_write_at(file_page -> file, page->frame->kva, file_page->read_bytes, file_page->offset);
+		if (!held) lock_release (&file_lock);
 		pml4_set_dirty(page->evict_thread->pml4, page->va, false);
 	}
 	page->frame->page = NULL;
@@ -80,7 +97,10 @@ file_backed_destroy (struct page *page) {
 	}
 	// dirty 조건확인
 	if(pml4_is_dirty(t->pml4, page->va)){
-		file_write_at(file_page->file, page->frame->kva, file_page->read_bytes, file_page->offset);
+		bool held = lock_held_by_current_thread (&file_lock);
+		if (!held) lock_acquire (&file_lock);
+		file_write_at(file_page -> file, page->frame->kva, file_page->read_bytes, file_page->offset);
+		if (!held) lock_release (&file_lock);
 		// dirty 비트 내리기
 		pml4_set_dirty(t->pml4, page->va, false);
 	} 
@@ -88,7 +108,9 @@ file_backed_destroy (struct page *page) {
 	pml4_clear_page(t->pml4, page->va);
 	// 프레임테이블에서 제거 -> 물리 메모리 해제 -> 구조체 해제 -> null 순서 중요
 	// vm_frame_remove(page->frame);
+	lock_acquire (&frame_lock);
 	list_remove(&page->frame->frame_elem);
+	lock_release (&frame_lock);
 	palloc_free_page(page->frame->kva);
 	free(page->frame);
 	page->frame = NULL;
@@ -102,7 +124,13 @@ lazy_load_segment (struct page *page, void *aux) {
 	struct vm_entry *aux1 = (struct vm_entry *)aux;
 	uint8_t *kva = page->frame->kva;
 
-	if (file_read_at(aux1->file,kva, aux1->read_bytes, aux1->offset)!=(int32_t)aux1->read_bytes){
+
+	bool held = lock_held_by_current_thread (&file_lock);
+	if (!held) lock_acquire (&file_lock);
+	int n = file_read_at(aux1->file,kva, aux1->read_bytes, aux1->offset);
+	if (!held) lock_release (&file_lock);
+
+	if (n!=(int32_t)aux1->read_bytes){
 		free(aux1);
 		return false;
 	}
@@ -115,14 +143,22 @@ void *
 do_mmap (void *addr, size_t length, int writable,
 		struct file *file, off_t offset) {
 		int64_t addr_map = addr;
+		if (offset % PGSIZE != 0) return NULL;                                    /* mmap-bad-off */
+		if ((uint64_t) addr + length < (uint64_t) addr) return NULL;              /* 주소 오버플로 */
+		if (is_kernel_vaddr (addr) || is_kernel_vaddr (addr + length - 1)) return NULL;  /* mmap-kernel */
 			
 		if (addr_map % PAGE_SIZE == 0 && addr_map!=0){ //정렬시켰는지 확인
 			if(length <= 0 ) return NULL;
 			int pagenum = (length + PAGE_SIZE - 1) / PAGE_SIZE; //나눈다음 페이지 개수 4KB 크기
 			struct thread *thread = thread_current();
 			int64_t in = length;
-			int64_t size = file_length(file)-offset;//만약 중간부터 시작한다면 
-			if(in < size)return NULL; //매핑할 크기가 파일크기보다 작다면 
+			bool held = lock_held_by_current_thread (&file_lock);
+			if (!held) lock_acquire (&file_lock);
+			int64_t size = file_length(file) - offset;
+			struct file *reopened = file_reopen(file);
+			if (!held) lock_release (&file_lock);
+			// if(in < size)return NULL; //매핑할 크기가 파일크기보다 작다면 
+			if (size > in) size = in;
 			// struct file *file_struct = file_reopen(file);
 			struct file_page file_page;//구지 말록으로 할 필요 없음
 			file_page.file = file_reopen(file); //한번만 open 시키기 위해 반복문 밖에 설치
@@ -203,5 +239,8 @@ do_munmap (void *addr) {
 		addr += PGSIZE; //다음 페이지
 		count ++;  // count를 증가시킴
 	}
-	file_close(file); // 반복문을 통하여 전체 페이지를 전부 없앴기 때문에 file을 닫음
+	bool held = lock_held_by_current_thread (&file_lock);
+	if (!held) lock_acquire (&file_lock);
+	file_close(file);
+	if (!held) lock_release (&file_lock); // 반복문을 통하여 전체 페이지를 전부 없앴기 때문에 file을 닫음
 }
