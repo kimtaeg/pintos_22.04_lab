@@ -31,23 +31,6 @@ file_backed_initializer (struct page *page, enum vm_type type, void *kva) {
 	struct file_page *file_page = &page->file;
 }
 
-static bool
-lazy_load_segment (struct page *page, void *aux) {
-	/* TODO: Load the segment from the file */
-	/* TODO: This called when the first page fault occurs on address VA. */
-	/* TODO: VA is available when calling this function. */
-	struct vm_entry *aux1 = (struct vm_entry *)aux;
-	uint8_t *kva = page->frame->kva;
-
-	if (file_read_at(aux1->file, kva, aux1->read_bytes, aux1->offset)!=(int32_t)aux1->read_bytes){
-		free(aux1);
-		return false;
-	}
-	memset (kva + aux1->read_bytes, 0, aux1 -> zero_bytes);
-	free(aux1);
-	return true;
-}
-
 /* Swap in the page by read contents from the file. */
 static bool
 file_backed_swap_in (struct page *page, void *kva) {
@@ -80,7 +63,7 @@ file_backed_swap_out (struct page *page) {
 	}
 	page->frame->page = NULL;
 	page->frame = NULL;
-	
+
 	pml4_clear_page(page->evict_thread->pml4, page->va);
 	return true;
 }
