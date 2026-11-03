@@ -10,6 +10,7 @@ struct file_page {
 	struct file *file;
 	off_t offset;
 	size_t read_bytes;
+	size_t zero_bytes;
 	
 };
 

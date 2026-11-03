@@ -65,6 +65,7 @@ vm_alloc_page_with_initializer (enum vm_type type, void *upage, bool writable,
 	if (new_page == NULL) return false;
 	struct supplemental_page_table *spt = &thread_current ()->spt;
 	// 페이지 생성을 위쪽에서 하고, 
+	new_page->evict_thread = thread_current();
 	/*
 	page_initializer
 	-> 해당 페이지를 다른 페이지로 바꿔주는 애
