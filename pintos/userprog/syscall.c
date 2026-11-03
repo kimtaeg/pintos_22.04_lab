@@ -130,7 +130,8 @@ syscall_handler (struct intr_frame *f) {
 		case SYS_MMAP:
 			// mmap();
 			
-			struct file *file = fd_to_file(f->R.r10);//이건 int 잖아
+			struct file *file = fd_to_file(f->R.r10);//이건 fd 번호를 file 형태로 변환
+			if (file ==NULL) exit(-1); //만약 file 로 변환 시킨게 안된다면 종료
 			f->R.rax = do_mmap(f->R.rdi,f->R.rsi,f->R.rdx,file,f->R.r8);
 			break;
 

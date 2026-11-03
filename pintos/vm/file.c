@@ -62,7 +62,8 @@ file_backed_destroy (struct page *page) {
 	// pml4 매핑 제거
 	pml4_clear_page(t->pml4, page->va);
 	// 프레임테이블에서 제거 -> 물리 메모리 해제 -> 구조체 해제 -> null 순서 중요
-	vm_frame_remove(page->frame);
+	// vm_frame_remove(page->frame);
+	list_remove(&page->frame->frame_elem);
 	palloc_free_page(page->frame->kva);
 	free(page->frame);
 	page->frame = NULL;
@@ -88,26 +89,25 @@ lazy_load_segment (struct page *page, void *aux) {
 void *
 do_mmap (void *addr, size_t length, int writable,
 		struct file *file, off_t offset) {
-		struct thread *thread = thread_current();
-		
 		int64_t addr_map = addr;
-		if(length <= 0 ) return NULL;
+			
 		if (addr_map % PAGE_SIZE == 0 && addr_map!=0){ //정렬시켰는지 확인
+			if(length <= 0 ) return NULL;
 			int pagenum = (length + PAGE_SIZE - 1) / PAGE_SIZE; //나눈다음 페이지 개수 4KB 크기
-
-			int64_t off = offset;
+			struct thread *thread = thread_current();
 			int64_t in = length;
-			int64_t size = file_length(file);
+			int64_t size = file_length(file)-offset;//만약 중간부터 시작한다면 
+			if(in < size)return NULL; //매핑할 크기가 파일크기보다 작다면 
 			// struct file *file_struct = file_reopen(file);
 			struct file_page file_page;//구지 말록으로 할 필요 없음
 			file_page.file = file_reopen(file); //한번만 open 시키기 위해 반복문 밖에 설치
-
+			file_page.zero_bytes = length - size; //매핑 길이 - 파일 크기 해서 zero 넣기
 
 			for (int i=0;i<pagenum;i++){ //페이지 개수만큼 보내기
 				//왜 vm_entry 냐면 aux를 가져오기 위해서 loazy_load_sement 를 사용하는데 이게 vm_entry로 매서로 가짐 그래서 vmn_entry로 하는거
 				struct vm_entry *vm_entry = malloc(sizeof(struct vm_entry)); //말록으로 힙에 할당하기
 				vm_entry->file = file_page.file;
-				vm_entry->offset = off; //돌때마다 하기
+				vm_entry->offset = offset; //돌때마다 하기
 				
 				if (size>=PAGE_SIZE){ //만약 길이가 4KB 와 같거나 크다면
 					vm_entry->read_bytes = PAGE_SIZE;
@@ -128,7 +128,11 @@ do_mmap (void *addr, size_t length, int writable,
 
 
 				if(!vm_alloc_page_with_initializer(VM_FILE,addr + i*PAGE_SIZE,writable,lazy_load_segment,vm_entry)) {	
-					free(vm_entry); //여러번 시켜야 하는데 일단 설계만
+					for(int j=0 ; j<i ; j++){//일단 반복은 시켰는데 이게 페이지사이즈 만큼 내리면서 하면 될꺼 같은데 일단 여기까지
+						free(vm_entry);
+					}
+					 //여러번 시켜야 하는데 일단 설계만
+					//만약 실패하면 현재 i번으로 페이지 만큼 빼면서 하면 될꺼 같은데
 					return NULL; // VM에 페이지 만들기 실패하면 NULL 반환
 				}
 				
