@@ -30,7 +30,7 @@ hash_init (struct hash *h,
 	h->hash = hash;
 	h->less = less;
 	h->aux = aux;
-
+	
 	if (h->buckets != NULL) {
 		hash_clear (h, NULL);
 		return true;
@@ -391,4 +391,3 @@ remove_elem (struct hash *h, struct hash_elem *e) {
 	h->elem_cnt--;
 	list_remove (&e->list_elem);
 }
-

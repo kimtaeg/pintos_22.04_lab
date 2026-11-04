@@ -33,6 +33,7 @@ uninit_new (struct page *page, void *va, vm_initializer *init,
 		.operations = &uninit_ops,
 		.va = va,
 		.frame = NULL, /* no frame for now */
+		.hash_elem = NULL, //해시 테이블 elem 초기화
 		.uninit = (struct uninit_page) {
 			.init = init,
 			.type = type,

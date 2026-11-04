@@ -99,7 +99,6 @@ main (void) {
 	input_init ();
 #ifdef USERPROG
 	exception_init ();
-	process_list_init ();
 	syscall_init ();
 #endif
 	/* Start thread scheduler and enable interrupts. */

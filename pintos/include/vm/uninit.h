@@ -16,6 +16,7 @@ struct uninit_page {
 	void *aux;
 	/* Initiate the struct page and maps the pa to the va */
 	bool (*page_initializer) (struct page *, enum vm_type, void *kva);
+	// uninit -> 일반 페이지로 바뀔 떄 사용하는 init 함수
 };
 
 void uninit_new (struct page *page, void *va, vm_initializer *init,

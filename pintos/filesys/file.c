@@ -86,13 +86,13 @@ file_read_at (struct file *file, void *buffer, off_t size, off_t file_ofs) {
 	return inode_read_at (file->inode, buffer, size, file_ofs);
 }
 
-/* Writes SIZE bytes from BUFFER into FILE,
- * starting at the file's current position.
- * Returns the number of bytes actually written,
- * which may be less than SIZE if end of file is reached.
- * (Normally we'd grow the file in that case, but file growth is
- * not yet implemented.)
- * Advances FILE's position by the number of bytes read. */
+/* BUFFER의 SIZE 바이트를 FILE로 씁니다,
+ * 파일의 현재 위치에서 시작합니다.
+ * 실제로 기록된 바이트 수를 반환합니다,
+ * 파일 끝에 도달하면 SIZE보다 작을 수 있습니다.
+ * (보통은 그런 경우 파일을 확장하지만, 파일 확장은
+ * 아직 구현되지 않음.)
+ * 읽은 바이트 수만큼 FILE의 위치를 이동합니다. */
 off_t
 file_write (struct file *file, const void *buffer, off_t size) {
 	off_t bytes_written = inode_write_at (file->inode, buffer, size, file->pos);
@@ -100,13 +100,13 @@ file_write (struct file *file, const void *buffer, off_t size) {
 	return bytes_written;
 }
 
-/* Writes SIZE bytes from BUFFER into FILE,
- * starting at offset FILE_OFS in the file.
- * Returns the number of bytes actually written,
- * which may be less than SIZE if end of file is reached.
- * (Normally we'd grow the file in that case, but file growth is
- * not yet implemented.)
- * The file's current position is unaffected. */
+/* BUFFER의 SIZE 바이트를 FILE로 씁니다,
+ * 파일의 offset FILE_OFS부터 시작합니다.
+ * 실제로 기록된 바이트 수를 반환합니다,
+ * 파일 끝에 도달하면 SIZE보다 작을 수 있습니다.
+ * (보통은 그런 경우 파일을 확장하지만, 파일 확장은
+ * 아직 구현되지 않음.)
+ * 파일의 현재 위치는 변경되지 않습니다. */
 off_t
 file_write_at (struct file *file, const void *buffer, off_t size,
 		off_t file_ofs) {

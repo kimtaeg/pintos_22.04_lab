@@ -25,8 +25,6 @@
 
 #define pg_no(va) ((uint64_t) (va) >> PGBITS)
 
-#define pg_addr(va) ((uint64_t) (va) << PGBITS)
-
 /* Round up to nearest page boundary. */
 #define pg_round_up(va) ((void *) (((uint64_t) (va) + PGSIZE - 1) & ~PGMASK))
 
@@ -47,11 +45,11 @@
 
 // FIXME: add checking
 /* Returns kernel virtual address at which physical address PADDR
- *  is mapped. */
+ *  is mapped. *///KVA 구하기
 #define ptov(paddr) ((void *) (((uint64_t) paddr) + KERN_BASE))
 
 /* Returns physical address at which kernel virtual address VADDR
- * is mapped. */
+ * is mapped. *///PA 구하기
 #define vtop(vaddr) \
 ({ \
 	ASSERT(is_kernel_vaddr(vaddr)); \

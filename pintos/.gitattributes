@@ -1,0 +1,10 @@
+# Pintos executable scripts
+utils/pintos text eol=lf
+utils/pintos-mkdisk text eol=lf
+
+# Test data
+tests/userprog/*.txt text eol=lf
+
+# Python and shell scripts
+*.py text eol=lf
+*.sh text eol=lf
