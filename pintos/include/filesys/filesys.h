@@ -8,6 +8,8 @@
 #define FREE_MAP_SECTOR 0       /* Free map file inode sector. */
 #define ROOT_DIR_SECTOR 1       /* Root directory file inode sector. */
 
+#define FILE_MAX 512
+
 /* Disk used for file system. */
 extern struct disk *filesys_disk;
 

@@ -4,9 +4,13 @@
 #include <debug.h>
 #include <list.h>
 #include <stdint.h>
+#include "threads/fixed_point.h"
 #include "threads/interrupt.h"
-#include "filesys/file.h"
+
+#ifdef USERPROG
 #include "threads/synch.h"
+#endif
+
 #ifdef VM
 #include "vm/vm.h"
 #endif
@@ -87,73 +91,40 @@ typedef int tid_t;
  * only because they are mutually exclusive: only a thread in the
  * ready state is on the run queue, whereas only a thread in the
  * blocked state is on a semaphore wait list. */
-
-struct fd_row
-{
-	int value;
-	int next_fd;
-	struct file *file;
-	struct list_elem elem;
-};
-
 struct thread {
 	/* Owned by thread.c. */
 	tid_t tid;                          /* Thread identifier. */
 	enum thread_status status;          /* Thread state. */
 	char name[16];                      /* Name (for debugging purposes). */
-	int priority;                       /* 바꾸는 priority */
-	int nice;
-	int recent_cpu;
-
-	int original_priority;					/*내가 원체 create에서 받은 우선순위가 아니라 양도 받은 놈 */
-
-	int64_t wake_ticks;					/*wake tick*/
-
-	struct lock *waiting_lock;					/*지금 기다리고 있는 락 위치*/
-	/*
-	lock
-		lock 안에 문잠구고 들어가있는 thread
-		semaphore
-			1
-			list 정렬이 된 상태
-	*/
-	struct list donors_list;
-	/*
-	list를 순회하면서 얘네들의 우선순위를 볼 수 있다
-	이것들을 max 해주면 내 바뀐 우선순위를 가질 수 있다.
-	*/
-	struct list_elem donation_elem;
-	/*
-	내가 1짱이야 cpu 쓸거야 근데 lock에 접근해봤더니 이미 잠겼어
-	lock을 가지고 있는 놈에게 이 
-	*/
-
-	struct list_elem all_list_elem;     /* all_list 선언 */
-
-	struct list fd_table_list;
-	int next_fd;
-
+	int priority;                       /* Priority. */
+	int64_t wakeup_tick;                /* wakeup_tick. */
 
 	/* Shared between thread.c and synch.c. */
 	struct list_elem elem;              /* List element. */
-	
 
-
+	int original;
+	struct list donations;
+	struct list_elem donations_elem;
+	struct lock * wait_on_lock;
+	int nice;
+	fixed_t recent_cpu;
+	struct list_elem mlfqs_list_elem; // 동시에 하나만 들어갈 수 있으므로 하나 더 추가 (현재 running_thread, ready_thread 세기 위함)
 #ifdef USERPROG
 	/* Owned by userprog/process.c. */
-	uint64_t *pml4;                     /* Page map level 4 */
-	int exit_status;				// exit로 전달되는 부모가 wait에서 받음
-	
-	struct intr_frame parent_if;
-
-	struct semaphore fork_sema;
-	bool fork_success;
-
 	struct file *running_file;
+	uint64_t *pml4;                     /* Page map level 4 */
+	//struct file **fdt;
+	struct file_descriptor **fdt;
+	int exit_status;
+	struct list childs;
+	struct list_elem child_elem;
+	struct semaphore child_sema;
+	struct semaphore parent_sema;
 #endif
 #ifdef VM
 	/* Table for whole virtual memory owned by thread. */
 	struct supplemental_page_table spt;
+	void *user_rsp;					  // 스택 growth 유저 스택 rsp - 프젝 3
 #endif
 
 	/* Owned by thread.c. */
@@ -161,10 +132,23 @@ struct thread {
 	unsigned magic;                     /* Detects stack overflow. */
 };
 
+enum fd_type
+{
+	FD_STDOUT,
+	FD_STDIN,
+	FD_FILE
+};
+
+struct file_descriptor {
+	enum fd_type fT;
+    struct file *file;      // 실제 파일 포인터 (stdin/stdout 식별용 특수 플래그/포인터 포함)
+    int share;          // 이 파일 엔트리를 참조하는 FD 개수
+};
+
 /* If false (default), use round-robin scheduler.
    If true, use multi-level feedback queue scheduler.
    Controlled by kernel command-line option "-o mlfqs". */
-extern bool thread_mlfqs; // <-- 이 친구를 사용해서 껐다가 켜!
+extern bool thread_mlfqs;
 
 void thread_init (void);
 void thread_start (void);
@@ -175,8 +159,6 @@ void thread_print_stats (void);
 typedef void thread_func (void *aux);
 tid_t thread_create (const char *name, int priority, thread_func *, void *);
 
-void thread_wake (int64_t ticks);
-void thread_sleep (int64_t ticks);
 void thread_block (void);
 void thread_unblock (struct thread *);
 
@@ -184,38 +166,27 @@ struct thread *thread_current (void);
 tid_t thread_tid (void);
 const char *thread_name (void);
 
-void thread_check_preemption(void);
 void thread_exit (void) NO_RETURN;
 void thread_yield (void);
 
 int thread_get_priority (void);
 void thread_set_priority (int);
+void refresh_priority (void);
 
 int thread_get_nice (void);
 void thread_set_nice (int);
 int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
 
+void mlfqs_increment_recent_cpu (void);
+void mlfqs_recalc_recent_cpu (void);
+void mlfqs_recalc_all_priority (void);
+
 void do_iret (struct intr_frame *tf);
 
-bool thread_priority_greater(const struct list_elem *a, const struct list_elem *b, void *aux);
+void update_load_avg(void);
+bool check_thread_mlfqs(void);
 
-void recursive_donation(struct thread *receiver, int priority);
-void push_donation(struct thread *donor, struct thread *receiver);
-void refresh_priority(void);
-
-void thread_calc_recent_cpu_running(void);
-void thread_calc_recent_cpu_all(void);
-void thread_calc_priority_all(void);
-void thread_calc_load_avg(void);
-
-// fd row init func
-struct fd_row *fd_row_init(int value, struct file *file);
-
-struct fd_row *fd_row_find(int value);
-
-void fd_row_remove(struct fd_row *fd_row);
-
-void fd_table_cleanup (void);
-
+bool cmp_priority(const struct list_elem *x, const struct list_elem *y, void *aux);
+void cmp_first_ready_list(int priority);
 #endif /* threads/thread.h */

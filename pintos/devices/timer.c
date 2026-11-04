@@ -26,11 +26,15 @@ static unsigned loops_per_tick;
 
 static intr_handler_func timer_interrupt;
 static bool too_many_loops (unsigned loops);
+static bool wakeup_less (const struct list_elem *a, const struct list_elem *b, void *aux);
 static void busy_wait (int64_t loops);
 static void real_time_sleep (int64_t num, int32_t denom);
 
- //sleep_list 생성
-
+/* chan; Sleep_list
+   Wakeup_tick 오름차순으로 정렬되어 있고, 
+   인터럽트를 끈 상태에서만 접근 cus deadlock방지
+*/
+static struct list sleep_list;
 
 /* Sets up the 8254 Programmable Interval Timer (PIT) to
    interrupt PIT_FREQ times per second, and registers the
@@ -47,7 +51,7 @@ timer_init (void) {
 
 	intr_register_ext (0x20, timer_interrupt, "8254 Timer");
 
-	
+	list_init (&sleep_list);
 }
 
 /* Calibrates loops_per_tick, used to implement brief delays. */
@@ -93,19 +97,18 @@ timer_elapsed (int64_t then) {
 }
 
 /* Suspends execution for approximately TICKS timer ticks. */
-
-
+/* chan; tinr_disable(); ISR즉 timer_interrupt()와 같이 사용하는데
+   ISR에서는 lock를 못씀 그래서 인터럽트를 꺼버림
+   한마디로 deadlock방지 */
 void
 timer_sleep (int64_t ticks) {
+	thread_current()->wakeup_tick = timer_ticks() + ticks;
+	enum intr_level level = intr_disable();
 
-	ASSERT (intr_get_level () == INTR_ON);
-	
-	if(ticks <= 0) return;
+	list_insert_ordered(&sleep_list, &thread_current()->elem, wakeup_less, NULL);
+	thread_block();
 
-	int64_t wakeup_tick = timer_ticks() + ticks;
-
-	thread_sleep(wakeup_tick);
-
+	intr_set_level(level);
 }
 
 /* Suspends execution for approximately MS milliseconds. */
@@ -131,26 +134,37 @@ void
 timer_print_stats (void) {
 	printf ("Timer: %"PRId64" ticks\n", timer_ticks ());
 }
-
+
 /* Timer interrupt handler. */
+/* chan; 같은 tick에 여러 스레드가 깰 수 있어서 while로 한 틱에 다 빼버림
+   sleep_list는 항상 정렬이라 시간이 안된 스레드를 만나면 break */
 static void
 timer_interrupt (struct intr_frame *args UNUSED) {
 	ticks++;
-	if(thread_mlfqs){
-		//running cpu recent_cpu 증가
-		thread_calc_recent_cpu_running();
-		if(ticks % 100 ==0){
-			//매초 load_avgh, 전체 recent_cpu 계산
-			thread_calc_load_avg();
-			thread_calc_recent_cpu_all();
+	if (thread_mlfqs) {
+
+		mlfqs_increment_recent_cpu();
+		if (timer_ticks () % TIMER_FREQ == 0) {
+			update_load_avg();
+			mlfqs_recalc_recent_cpu();
 		}
-		if(ticks % 4 ==0){
-			//전체 쓰레드 priority 갱신
-			thread_calc_priority_all();
+		if (ticks % 4 == 0) {
+			mlfqs_recalc_all_priority();
 		}
 	}
-	thread_tick();
-	thread_wake(ticks);
+
+	while (!list_empty(&sleep_list))
+	{
+		struct thread *t = list_entry (list_front (&sleep_list), struct thread, elem);
+		if (t->wakeup_tick <= ticks) {
+			list_pop_front(&sleep_list);
+			thread_unblock(t);
+		}else{
+			break;
+		}
+
+	}
+	thread_tick ();
 }
 
 /* Returns true if LOOPS iterations waits for more than one timer
@@ -169,6 +183,20 @@ too_many_loops (unsigned loops) {
 	/* If the tick count changed, we iterated too long. */
 	barrier ();
 	return start != ticks;
+}
+
+/* chan; a가 먼저 wakeup이면 True
+   값이 같으면 False라서 먼저 sleep인 스레드가 앞 cus is FIFO */
+static bool
+wakeup_less (const struct list_elem *a, const struct list_elem *b, void *aux) {
+	struct thread *ta = list_entry(a, struct thread, elem);
+	struct thread *tb = list_entry(b, struct thread, elem);
+	if (ta->wakeup_tick < tb->wakeup_tick){
+		return true;
+	}else{
+		return false;
+	}
+
 }
 
 /* Iterates through a simple loop LOOPS times, for implementing

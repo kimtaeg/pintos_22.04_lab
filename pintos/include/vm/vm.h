@@ -2,6 +2,7 @@
 #define VM_VM_H
 #include <stdbool.h>
 #include "threads/palloc.h"
+#include "kernel/hash.h"
 
 enum vm_type {
 	/* page not initialized */
@@ -15,8 +16,8 @@ enum vm_type {
 
 	/* Bit flags to store state */
 
-	/* Auxillary bit flag marker for store information. You can add more
-	 * markers, until the value is fit in the int. */
+	/* 저장 정보를 위한 보조 비트 플래그 마커. 더 추가할 수 있습니다
+	 * 값이 int에 맞을 때까지 마커를 추가합니다. */
 	VM_MARKER_0 = (1 << 3),
 	VM_MARKER_1 = (1 << 4),
 
@@ -33,7 +34,7 @@ enum vm_type {
 
 struct page_operations;
 struct thread;
-
+// extern struct lock frame_lock;
 #define VM_TYPE(type) ((type) & 7)
 
 /* The representation of "page".
@@ -42,27 +43,35 @@ struct thread;
  * DO NOT REMOVE/MODIFY PREDEFINED MEMBER OF THIS STRUCTURE. */
 struct page {
 	const struct page_operations *operations;
-	void *va;              /* Address in terms of user space */
+	void *va;              /* 가상주소 Address in terms of user space */
 	struct frame *frame;   /* Back reference for frame */
-
+	bool rw;
+	int num ; //매핑 총 페이지 개수
+	struct thread *owner; // 이 페이지를 가진 스레드
 	/* Your implementation */
-
+	struct hash_elem hash_elem;	// spt 해시테이블 연결고리 
 	/* Per-type data are binded into the union.
 	 * Each function automatically detects the current union */
 	union {
 		struct uninit_page uninit;
 		struct anon_page anon;
 		struct file_page file;
+#ifdef VM
+	
+#endif
+
 #ifdef EFILESYS
 		struct page_cache page_cache;
 #endif
 	};
 };
 
+
 /* The representation of "frame" */
 struct frame {
 	void *kva;
 	struct page *page;
+	struct list_elem frame_elem;
 };
 
 /* The function table for page operations.
@@ -84,7 +93,15 @@ struct page_operations {
 /* Representation of current process's memory space.
  * We don't want to force you to obey any specific design for this struct.
  * All designs up to you for this. */
+struct vm_entry{
+	uint32_t zero_bytes;
+	uint32_t read_bytes;
+	off_t offset;
+	struct file *file;
+};
+
 struct supplemental_page_table {
+	struct hash hash_list;
 };
 
 #include "threads/thread.h"
@@ -108,5 +125,11 @@ bool vm_alloc_page_with_initializer (enum vm_type type, void *upage,
 void vm_dealloc_page (struct page *page);
 bool vm_claim_page (void *va);
 enum vm_type page_get_type (struct page *page);
+void vm_frame_remove (struct frame *frame);
+
+void frame_table_insert(struct list_elem *elem);
+// void frame_table_remove(struct frame *frame);
 
 #endif  /* VM_VM_H */
+
+
